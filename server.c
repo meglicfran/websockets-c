@@ -30,6 +30,17 @@ struct key_val{
     struct key_val* next_key_val;
 };
 
+int fd_size=1, fd_count=0;//fd_size - size of unerlying array, fd_count - num of element currently in the array
+struct pollfd* pfds;
+
+void print_binary(unsigned char byte){
+    for(int i=0;i<8;i++){
+        unsigned char mask = 1<<(8-1-i);
+        printf("%d", byte&mask?1:0);
+    }
+    printf("\n");
+}
+
 void print_message(int sockfd, char* msg){
     printf("Message received from socket %d:\n", sockfd);
     printf("--------------------------------------------\n");
@@ -128,7 +139,8 @@ void del_from_pdfs(struct pollfd pdfs[], int index, int* fd_count){
     (*fd_count)--; // decrease counter
 }
 
-void parse_headers(char* msg, int msglen, struct http_header* header){
+//returns -1 on error, 0 otherwise
+int parse_http_headers(char* msg, int msglen, struct http_header* header){
     char buf[msglen];
     int lencounter=0;
 
@@ -148,6 +160,9 @@ void parse_headers(char* msg, int msglen, struct http_header* header){
             break;
         }
     }
+    if(i>=msglen || buf[lencounter] != '\0' || strcmp(buf,"GET")!=0){
+        return -1;
+    }
     lencounter=0;
 
     //Parsing url
@@ -163,6 +178,9 @@ void parse_headers(char* msg, int msglen, struct http_header* header){
             i++;
             break;
         }
+    }
+    if(i>=msglen || buf[lencounter] != '\0'){
+        return -1;
     }
     lencounter=0;
     
@@ -181,6 +199,7 @@ void parse_headers(char* msg, int msglen, struct http_header* header){
         }
     }
     lencounter=0;
+
     header->headers = malloc(sizeof(struct key_val));
     memset(header->headers, 0, sizeof(struct key_val));
     header->headers->next_key_val=NULL;
@@ -229,8 +248,8 @@ void parse_headers(char* msg, int msglen, struct http_header* header){
             cur -> next_key_val = new;
             cur = new;
         }
-
     }
+    return 0;
 }
 
 void send_handshake_response(int sockfd, unsigned char* base64, int base64len){
@@ -247,7 +266,9 @@ void send_handshake_response(int sockfd, unsigned char* base64, int base64len){
     header = concat(header, strlen(header), base64, strlen(base64));
     header = concat(header, strlen(header), end, strlen(end));    
     header = concat(header, strlen(header), fourth, strlen(fourth));
-    header = concat(header, strlen(header), end, strlen(end));    
+    header = concat(header, strlen(header), end, strlen(end));
+    printf("Handshake response:\n"); 
+    printf("--------------------------------------------\n");
     printf("%s", header);
     printf("--------------------------------------------\n");
 
@@ -257,8 +278,8 @@ void send_handshake_response(int sockfd, unsigned char* base64, int base64len){
 }
 
 void websocket_handshake(char* websocket_key, int sockfd){
-    printf("Websocket key: %s \n", websocket_key);
-    printf("--------------------------------------------\n");
+    //printf("Websocket key: %s \n", websocket_key);
+    //printf("--------------------------------------------\n");
 
     //concatenating key with magic string
     char magic_string[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"; //magic string
@@ -273,13 +294,11 @@ void websocket_handshake(char* websocket_key, int sockfd){
     int output_length = 4 * ((strlen(sha1) + 2) / 3); //Base64 output size calculation
     unsigned char* base64 = malloc(output_length);
     EVP_EncodeBlock(base64, sha1, strlen(sha1));
-    printf("Concatenated SHA1 (Base64): %s\n", base64);
-    printf("--------------------------------------------\n");
 
     send_handshake_response(sockfd, base64, strlen(base64));
 }
 
-void handle_http_request(int sockfd, char* msg, int msglen, struct http_header* header){
+void handle_http_request(int pfds_index, char* msg, int msglen, struct http_header* header){
     
     char* websocket_key;
     int handshake=0;
@@ -293,27 +312,64 @@ void handle_http_request(int sockfd, char* msg, int msglen, struct http_header* 
     }
 
     if(handshake){
-        websocket_handshake(websocket_key, sockfd);
+        websocket_handshake(websocket_key, pfds[pfds_index].fd);
+    }else{
+        printf("[Sec-WebSocket-Key] not found.\n");
+        printf("--------------------------------------------\n");
     }
 }
 
-void handle_message(int sockfd, char* msg, int msglen){
-    
-    struct http_header header;
-    parse_headers(msg, msglen, &header);
-
-    printf("method:%s\nurl:%s\nprotocol:%s\n", header.method, header.url, header.protocol);
-
-    if(strcmp(header.method,"GET")==0 && strcmp(header.url, "/")==0 && strcmp(header.protocol, "HTTP/1.1")==0){
-        printf("x\n");
-        handle_http_request(sockfd, msg, msglen, &header);
+//returns -1 on error, 0 otherwise
+int handle_ws_dataframe(int pfds_index, char* msg, int msglen){
+    printf("Handle ws dataframe:\n");
+    if(msglen<2){
+        printf("--------------------------------------------\n");
+        return -1;
     }
+    
+    //parsing first byte
+    unsigned char first_byte = msg[0];
+    int fin = first_byte&(0b10000000)?1:0;
+    unsigned char reserved = first_byte&(0b01110000);
+    unsigned char opcode = first_byte&(0b00001111);
+    printf("Fin: %d\n", fin);
+    printf("Reserved: 0x%x\n", reserved);
+    printf("Opcode: %d\n", opcode);
+
+    //parsing second byte
+    unsigned char second_byte = msg[1];
+    int mask = second_byte&(0b10000000)?1:0;
+    unsigned char payload_length = second_byte&(0b01111111);
+    printf("Mask: %d\n", fin);
+    printf("Payload length: %d\n", payload_length);
+    if(mask!=1){
+        printf("Messages from the client must be masked. Disconnecting socket %d\n", pfds[pfds_index].fd);
+        printf("--------------------------------------------\n");
+        close(pfds[pfds_index].fd);
+        del_from_pdfs(pfds, pfds_index, &fd_count);
+        return -1;
+    }
+
+    printf("--------------------------------------------\n");
+
+}
+
+void handle_message(int pdfs_index, char* msg, int msglen){
+    print_message(pfds[pdfs_index].fd, msg);
+    struct http_header header;
+    if(parse_http_headers(msg, msglen, &header) == 0){
+        //printf("method:%s\nurl:%s\nprotocol:%s\n", header.method, header.url, header.protocol);
+        handle_http_request(pdfs_index, msg, msglen, &header);
+    }else{
+        handle_ws_dataframe(pdfs_index, msg, msglen);    
+    }
+
 }
 
 
 int main(int argc, char* argv[]){
-    int fd_size=1, fd_count=0; //fd_size - size of unerlying array, fd_count - num of element currently in the array
-    struct pollfd* pfds = malloc(sizeof(struct pollfd)*fd_size);
+     
+    pfds = malloc(sizeof(struct pollfd)*fd_size);
     struct sockaddr peeraddr;
     int listenerfd, num_events, peerlen, newfd, num_bytes;
     char msg[1000];
@@ -362,9 +418,7 @@ int main(int argc, char* argv[]){
 
                     msg[num_bytes]='\0'; //prevent funny bussines
 
-                    print_message(pfds[i].fd, msg);
-                    
-                    handle_message(pfds[i].fd, (char *)&msg, num_bytes);
+                    handle_message(i, (char *)&msg, num_bytes);
                 }
             }
         }
