@@ -350,8 +350,29 @@ int handle_ws_dataframe(int pfds_index, char* msg, int msglen){
         return -1;
     }
 
+    //masking-key
+    unsigned char masking_key[4];
+    memcpy(&masking_key, &(msg[2]), sizeof(masking_key));
+    //masking_key = ntohl(masking_key);
+    printf("Masking-key: %02x %02x %02x %02x\n", masking_key[0], masking_key[1], masking_key[2], masking_key[3]);
+    
+    //unmasking
+    unsigned char encoded[payload_length+1];
+    memcpy(&encoded, &(msg[6]), sizeof(encoded));
+    encoded[payload_length]='\0';
+    printf("Encoded msg: ");
+    for(int i=0;i<payload_length; i++){
+        printf("%0x ", encoded[i]);
+    }
+    printf("\n");
+    char decoded[payload_length+1];
+    memset(decoded, 0, sizeof(decoded));
+    for(int i=0; i<payload_length; i++){
+        decoded[i]=encoded[i] ^masking_key[i%4];
+    }
+    decoded[payload_length] = '\0';
+    printf("Decoded msg: %s\n", decoded);
     printf("--------------------------------------------\n");
-
 }
 
 void handle_message(int pdfs_index, char* msg, int msglen){
