@@ -328,7 +328,9 @@ int handle_ws_dataframe(int pfds_index, char* msg, int msglen){
     }
     
     //parsing first byte
-    unsigned char first_byte = msg[0];
+    int cur_byte = 0;
+    unsigned char first_byte = msg[cur_byte];
+    cur_byte++;
     int fin = first_byte&(0b10000000)?1:0;
     unsigned char reserved = first_byte&(0b01110000);
     unsigned char opcode = first_byte&(0b00001111);
@@ -337,11 +339,27 @@ int handle_ws_dataframe(int pfds_index, char* msg, int msglen){
     printf("Opcode: %d\n", opcode);
 
     //parsing second byte
-    unsigned char second_byte = msg[1];
+    unsigned char second_byte = msg[cur_byte];
+    cur_byte++;
     int mask = second_byte&(0b10000000)?1:0;
-    unsigned char payload_length = second_byte&(0b01111111);
+    unsigned long long payload_length = second_byte&(0b01111111);
+    if(payload_length==126){
+        memcpy(&payload_length, &(msg[cur_byte]), 2);
+        cur_byte+=2;
+        payload_length = ntohs(payload_length);
+    }else if(payload_length==127){
+        unsigned int bigend, littleend;
+        memcpy(&bigend, &(msg[cur_byte]), 2);
+        cur_byte+=2;
+        memcpy(&littleend, &(msg[cur_byte]), 2);
+        cur_byte+=2;
+        bigend = ntohl(bigend);
+        littleend = ntohl(littleend);    
+        payload_length = bigend*65536+littleend;
+    }
+
     printf("Mask: %d\n", fin);
-    printf("Payload length: %d\n", payload_length);
+    printf("Payload length: %lld\n", payload_length);
     if(mask!=1){
         printf("Messages from the client must be masked. Disconnecting socket %d\n", pfds[pfds_index].fd);
         printf("--------------------------------------------\n");
@@ -352,13 +370,14 @@ int handle_ws_dataframe(int pfds_index, char* msg, int msglen){
 
     //masking-key
     unsigned char masking_key[4];
-    memcpy(&masking_key, &(msg[2]), sizeof(masking_key));
-    //masking_key = ntohl(masking_key);
+    memcpy(&masking_key, &(msg[cur_byte]), sizeof(masking_key));
+    cur_byte+=sizeof(masking_key);
     printf("Masking-key: %02x %02x %02x %02x\n", masking_key[0], masking_key[1], masking_key[2], masking_key[3]);
-    
+
     //unmasking
     unsigned char encoded[payload_length+1];
-    memcpy(&encoded, &(msg[6]), sizeof(encoded));
+    memcpy(&encoded, &(msg[cur_byte]), sizeof(encoded));
+    cur_byte+=sizeof(encoded);
     encoded[payload_length]='\0';
     printf("Encoded msg: ");
     for(int i=0;i<payload_length; i++){
@@ -389,7 +408,6 @@ void handle_message(int pdfs_index, char* msg, int msglen){
 
 
 int main(int argc, char* argv[]){
-     
     pfds = malloc(sizeof(struct pollfd)*fd_size);
     struct sockaddr peeraddr;
     int listenerfd, num_events, peerlen, newfd, num_bytes;
