@@ -1,7 +1,10 @@
 default: server
 
-server: server.c
-	gcc server.c -lcrypto -o $@
+server: server.c server.h utils.o
+	gcc server.c -lcrypto -Xlinker utils.o -o $@
 
-.PHONY clean: server
-	rm server
+utils.o: utils.c utils.h
+	gcc -c utils.c 
+
+.PHONY clean: server utils.o
+	rm server utils.o
