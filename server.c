@@ -52,16 +52,16 @@ int start_listener(){
 }
 
 //returns -1 on error, 0 otherwise
-int parse_http_headers(char* msg, int msglen, struct http_header* header){
-    char buf[msglen];
+int parse_http_headers(char* data, int datalen, struct http_header* header){
+    char buf[datalen];
     int lencounter=0;
 
     int i=0;
 
     //Parsing the method
-    for(;i<msglen; i++){
-        if(msg[i]!=' '){
-            buf[lencounter]=msg[i];
+    for(;i<datalen; i++){
+        if(data[i]!=' '){
+            buf[lencounter]=data[i];
             lencounter++;
         }else{
             buf[lencounter]='\0';
@@ -72,15 +72,15 @@ int parse_http_headers(char* msg, int msglen, struct http_header* header){
             break;
         }
     }
-    if(i>=msglen || buf[lencounter] != '\0' || strcmp(buf,"GET")!=0){
+    if(i>=datalen || buf[lencounter] != '\0' || strcmp(buf,"GET")!=0){
         return -1;
     }
     lencounter=0;
 
     //Parsing url
-    for(; i<msglen; i++){
-        if(msg[i]!=' '){
-            buf[lencounter]=msg[i];
+    for(; i<datalen; i++){
+        if(data[i]!=' '){
+            buf[lencounter]=data[i];
             lencounter++;
         }else{
             buf[lencounter]='\0';
@@ -91,15 +91,15 @@ int parse_http_headers(char* msg, int msglen, struct http_header* header){
             break;
         }
     }
-    if(i>=msglen || buf[lencounter] != '\0'){
+    if(i>=datalen || buf[lencounter] != '\0'){
         return -1;
     }
     lencounter=0;
     
     //Parsing protocol
-    for(; i<msglen; i++){
-        if(msg[i]!='\r'){
-            buf[lencounter]=msg[i];
+    for(; i<datalen; i++){
+        if(data[i]!='\r'){
+            buf[lencounter]=data[i];
             lencounter++;
         }else{
             buf[lencounter]='\0';
@@ -119,9 +119,9 @@ int parse_http_headers(char* msg, int msglen, struct http_header* header){
     //Parsing key-vals
     while(1){
         //parsing key
-        for(; i<msglen; i++){
-            if(msg[i]!=':'){
-                buf[lencounter]=msg[i];
+        for(; i<datalen; i++){
+            if(data[i]!=':'){
+                buf[lencounter]=data[i];
                 lencounter++;
             }else{
                 buf[lencounter]='\0';
@@ -135,9 +135,9 @@ int parse_http_headers(char* msg, int msglen, struct http_header* header){
         lencounter=0;
 
         //parsing val
-        for(; i<msglen; i++){
-            if(msg[i]!='\r'){
-                buf[lencounter]=msg[i];
+        for(; i<datalen; i++){
+            if(data[i]!='\r'){
+                buf[lencounter]=data[i];
                 lencounter++;
             }else{
                 buf[lencounter]='\0';
@@ -150,8 +150,8 @@ int parse_http_headers(char* msg, int msglen, struct http_header* header){
         }
         lencounter=0;
 
-        //end of msg
-        if(i>=msglen || msg[i]=='\r'){
+        //end of data
+        if(i>=datalen || data[i]=='\r'){
             break;
         }else{ // 
             struct key_val* new = malloc(sizeof(struct key_val));
@@ -190,9 +190,6 @@ void send_handshake_response(int sockfd, unsigned char* base64, int base64len){
 }
 
 void websocket_handshake(char* websocket_key, int sockfd){
-    //printf("Websocket key: %s \n", websocket_key);
-    //printf("--------------------------------------------\n");
-
     //concatenating key with magic string
     char magic_string[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"; //magic string
     char* concatenated = concat(websocket_key, strlen(websocket_key), magic_string, strlen(magic_string));
@@ -207,11 +204,11 @@ void websocket_handshake(char* websocket_key, int sockfd){
     unsigned char* base64 = malloc(output_length);
     EVP_EncodeBlock(base64, sha1, strlen(sha1));
 
+
     send_handshake_response(sockfd, base64, strlen(base64));
 }
 
-void handle_http_request(int pfds_index, char* msg, int msglen, struct http_header* header){
-    
+void handle_http_request(int pfds_index, struct http_header* header){
     char* websocket_key;
     int handshake=0;
     struct key_val* p;
@@ -232,16 +229,16 @@ void handle_http_request(int pfds_index, char* msg, int msglen, struct http_head
 }
 
 //returns -1 on error, 0 otherwise
-int handle_ws_dataframe(int pfds_index, char* msg, int msglen){
+int handle_ws_dataframe(int pfds_index, char* dataframe, int dataframe_len){
     printf("Handle ws dataframe:\n");
-    if(msglen<2){
+    if(dataframe_len<2){
         printf("--------------------------------------------\n");
         return -1;
     }
     
     //parsing first byte
     int cur_byte = 0;
-    unsigned char first_byte = msg[cur_byte];
+    unsigned char first_byte = dataframe[cur_byte];
     cur_byte++;
     int fin = first_byte&(0b10000000)?1:0;
     unsigned char reserved = first_byte&(0b01110000);
@@ -251,19 +248,19 @@ int handle_ws_dataframe(int pfds_index, char* msg, int msglen){
     printf("Opcode: %d\n", opcode);
 
     //parsing second byte
-    unsigned char second_byte = msg[cur_byte];
+    unsigned char second_byte = dataframe[cur_byte];
     cur_byte++;
     int mask = second_byte&(0b10000000)?1:0;
     unsigned long long payload_length = second_byte&(0b01111111);
     if(payload_length==126){
-        memcpy(&payload_length, &(msg[cur_byte]), 2);
+        memcpy(&payload_length, &(dataframe[cur_byte]), 2);
         cur_byte+=2;
         payload_length = ntohs(payload_length);
     }else if(payload_length==127){
         unsigned int bigend, littleend;
-        memcpy(&bigend, &(msg[cur_byte]), 2);
+        memcpy(&bigend, &(dataframe[cur_byte]), 2);
         cur_byte+=2;
-        memcpy(&littleend, &(msg[cur_byte]), 2);
+        memcpy(&littleend, &(dataframe[cur_byte]), 2);
         cur_byte+=2;
         bigend = ntohl(bigend);
         littleend = ntohl(littleend);    
@@ -271,14 +268,14 @@ int handle_ws_dataframe(int pfds_index, char* msg, int msglen){
     }
 
     printf("Mask: %d\n", fin);
-    printf("Payload length: %lld (msglen=%d)\n", payload_length, msglen);
-    if(payload_length>msglen){
-        while(payload_length>msglen){
-            char more_msg[1000];
-            int num_bytes = recv(pfds[pfds_index].fd, more_msg, sizeof(more_msg), 0);
-            msg = concat(msg, strlen(msg), more_msg, num_bytes);
-            msglen = strlen(msg);
-            printf("\tfetching(%lld/%d)...\n", payload_length, msglen);
+    printf("Payload length: %lld (dataframe_len=%d)\n", payload_length, dataframe_len);
+    if(payload_length>dataframe_len){
+        while(payload_length>dataframe_len){
+            char dataframe_extension[1000];
+            int num_bytes = recv(pfds[pfds_index].fd, dataframe_extension, sizeof(dataframe_extension), 0);
+            dataframe = concat(dataframe, strlen(dataframe), dataframe_extension, num_bytes);
+            dataframe_len = strlen(dataframe);
+            printf("\tfetching(%lld/%d)...\n", payload_length, dataframe_len);
         }
     }
     if(mask!=1){
@@ -291,48 +288,42 @@ int handle_ws_dataframe(int pfds_index, char* msg, int msglen){
 
     //masking-key
     unsigned char masking_key[4];
-    memcpy(&masking_key, &(msg[cur_byte]), sizeof(masking_key));
+    memcpy(&masking_key, &(dataframe[cur_byte]), sizeof(masking_key));
     cur_byte+=sizeof(masking_key);
     printf("Masking-key: %02x %02x %02x %02x\n", masking_key[0], masking_key[1], masking_key[2], masking_key[3]);
 
-    //unmasking
+    //encoded bytes
     unsigned char encoded[payload_length+1];
-    memcpy(&encoded, &(msg[cur_byte]), sizeof(encoded));
+    memcpy(&encoded, &(dataframe[cur_byte]), sizeof(encoded));
     cur_byte+=sizeof(encoded);
     encoded[payload_length]='\0';
-    printf("Encoded msg: ");
-    for(int i=0;i<payload_length; i++){
-        printf("%0x ", encoded[i]);
-    }
-    printf("\n");
+
+    //decoding message
     char decoded[payload_length+1];
-    memset(decoded, 0, sizeof(decoded));
     for(int i=0; i<payload_length; i++){
-        decoded[i]=encoded[i] ^masking_key[i%4];
+        decoded[i]=encoded[i]^masking_key[i%4];
     }
     decoded[payload_length] = '\0';
+
     printf("Decoded msg: %s\n", decoded);
     printf("--------------------------------------------\n");
 }
 
-void handle_message(int pdfs_index, char* msg, int msglen){
-    print_message(pfds[pdfs_index].fd, msg);
+//Determine how data is interpreted and handled
+void handle_data(int pdfs_index, char* data, int datalen){
+    print_data(pfds[pdfs_index].fd, data);
     struct http_header header;
-    if(parse_http_headers(msg, msglen, &header) == 0){
-        //printf("method:%s\nurl:%s\nprotocol:%s\n", header.method, header.url, header.protocol);
-        handle_http_request(pdfs_index, msg, msglen, &header);
+    if(parse_http_headers(data, datalen, &header) == 0){
+        handle_http_request(pdfs_index, &header);
     }else{
-        handle_ws_dataframe(pdfs_index, msg, msglen);    
+        handle_ws_dataframe(pdfs_index, data, datalen);
     }
-
 }
-
 
 int main(int argc, char* argv[]){
     pfds = malloc(sizeof(struct pollfd)*fd_size);
-    struct sockaddr peeraddr;
-    int listenerfd, num_events, peerlen, newfd, num_bytes;
-    char msg[1000];
+    int listenerfd, num_events, newfd, num_bytes;
+    char data[1000];
     
     listenerfd = start_listener();
     if(listenerfd == -1){
@@ -350,10 +341,8 @@ int main(int argc, char* argv[]){
         }
         for(int i=0; i<fd_count; i++){
             if (pfds[i].revents & POLLIN){ //fd is ready to read
-
                 if(pfds[i].fd == listenerfd){ // if it's listener accept connection
-                    peerlen = sizeof(struct sockaddr);
-                    if ((newfd = accept(listenerfd, &peeraddr, &peerlen)) == -1){
+                    if ((newfd = accept(listenerfd, NULL, NULL)) == -1){
                         perror("accept");
                         continue;
                     }
@@ -362,7 +351,7 @@ int main(int argc, char* argv[]){
                     printf("New connection:%d\n", newfd);
                     printf("--------------------------------------------\n");
                 }else{ //handle the message
-                    num_bytes = recv(pfds[i].fd, msg, sizeof(msg), 0);
+                    num_bytes = recv(pfds[i].fd, data, sizeof(data), 0);
                     if(num_bytes == -1){ //error
                         perror("recv");
                         continue;
@@ -376,9 +365,9 @@ int main(int argc, char* argv[]){
                         continue;
                     }
 
-                    msg[num_bytes]='\0'; //prevent funny bussines
+                    data[num_bytes]='\0'; //prevent funny bussines
 
-                    handle_message(i, (char *)&msg, num_bytes);
+                    handle_data(i, (char *)&data, num_bytes);
                 }
             }
         }

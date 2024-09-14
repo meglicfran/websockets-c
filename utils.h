@@ -4,7 +4,7 @@
 #include <stdlib.h>
 
 void print_binary(unsigned char byte);
-void print_message(int sockfd, char* msg);
+void print_data(int sockfd, char* msg);
 void printHex(unsigned char* arr);
 void copyCharArr(char* src, char* dst, int len);
 char* concat(char* first, int firstlen, char* second, int secondlen);

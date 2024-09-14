@@ -11,3 +11,4 @@ Websocket protocol in C programming language.
 
 - [The WebSocket Protocol: RFC 6455](https://datatracker.ietf.org/doc/rfc6455/)
 
+- [Modular Programming in c](https://www.embedded.com/modular-programming-in-c/)

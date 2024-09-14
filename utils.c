@@ -8,10 +8,10 @@ void print_binary(unsigned char byte){
     printf("\n");
 }
 
-void print_message(int sockfd, char* msg){
+void print_data(int sockfd, char* data){
     printf("Message received from socket %d:\n", sockfd);
     printf("--------------------------------------------\n");
-    printf("%s\n", msg);
+    printf("%s\n", data);
     printf("--------------------------------------------\n");
 }
 
